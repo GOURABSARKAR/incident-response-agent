@@ -286,4 +286,3 @@ Deploy history:
     # Uncomment to test with your own logs:
     # ask("Here are my error logs: [paste your logs here]")
 
-# Made with Bob
