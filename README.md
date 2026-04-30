@@ -66,7 +66,7 @@ pip install -r requirements.txt
 cp .env.example .env
 
 # Edit .env and add your API keys and configuration
-# Required: Either ANTHROPIC_API_KEY or WATSON_API_KEY (depending on MODEL_PROVIDER)
+# Required: ANTHROPIC_API_KEY, WATSON_API_KEY, or OPENROUTER_API_KEY (depending on MODEL_PROVIDER)
 # Optional: MCP_SERVER_URL for MCP server integration
 ```
 
@@ -76,9 +76,25 @@ cp .env.example .env
 python agent.py
 ```
 
+The agent will prompt you for:
+1. **Log file path**: Enter the path to your log file (e.g., `sample_logs.txt` or `/path/to/logs.txt`)
+2. **Your query**: Enter your question about the logs (e.g., "What caused this error?" or "Create incident report")
+
+The agent will read the log file, attach its content to your query, and analyze it using the available skills.
+
+**Example:**
+```
+📁 Enter the path to the log file: sample_logs.txt
+✅ Successfully loaded log file: sample_logs.txt
+📊 Log file size: 1234 characters
+
+💬 Enter your query about the logs:
+Query: Diagnose the issue and create an incident report
+```
+
 ## ⚙️ Configuration
 
-The agent supports two model providers and optional MCP server integration:
+The agent supports three model providers and optional MCP server integration:
 
 ### Model Providers
 
@@ -97,6 +113,21 @@ WATSON_ML_URL=https://us-south.ml.cloud.ibm.com
 WATSON_PROJECT_ID=your-project-id
 WATSON_MODEL_ID=meta-llama/llama-3-3-70b-instruct
 ```
+
+**Option 3: OpenRouter**
+```bash
+MODEL_PROVIDER=openrouter
+OPENROUTER_API_KEY=your-openrouter-api-key
+OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
+OPENROUTER_API_BASE=https://openrouter.ai/api/v1
+OPENROUTER_TEMPERATURE=0.7
+OPENROUTER_MAX_TOKENS=4096
+```
+
+OpenRouter provides access to multiple AI models through a single API:
+- Get your API key from: https://openrouter.ai/keys
+- Browse available models: https://openrouter.ai/models
+- Popular options: `anthropic/claude-3.5-sonnet`, `openai/gpt-4-turbo`, `meta-llama/llama-3-70b-instruct`
 
 ### MCP Server Integration (Optional)
 
@@ -273,5 +304,3 @@ For issues or questions:
 - Open an issue in the repository
 
 ---
-
-**Built with ❤️ for on-call engineers everywhere**

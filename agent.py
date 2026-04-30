@@ -7,7 +7,7 @@ Use case: An incident response assistant that can:
 
 Run:
   pip install -r requirements.txt
-  export ANTHROPIC_API_KEY="your-key" (or configure WatsonX)
+  export ANTHROPIC_API_KEY="your-key" (or configure WatsonX/OpenRouter)
   python agent.py
 """
 
@@ -27,14 +27,22 @@ load_dotenv()
 
 
 # ─────────────────────────────────────────────────────────────
-# 1. MODEL SETUP  – Choose between Anthropic Claude or IBM WatsonX
+# 1. MODEL SETUP  – Choose between Anthropic Claude, IBM WatsonX, or OpenRouter
 # ─────────────────────────────────────────────────────────────
-MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "anthropic")  # "anthropic" or "watsonx"
+MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "anthropic")  # "anthropic", "watsonx", or "openrouter"
+
+print(f"\n{'='*70}")
+print(f"🤖 INCIDENT RESPONSE AGENT - INITIALIZING")
+print(f"{'='*70}")
 
 if MODEL_PROVIDER == "watsonx":
     # IBM WatsonX Model Setup
+    model_id = os.getenv("WATSON_MODEL_ID", "meta-llama/llama-3-3-70b-instruct")
+    print(f"📡 Model Provider: IBM WatsonX")
+    print(f"🧠 Model ID: {model_id}")
+    
     model = ChatWatsonx(
-        model_id=os.getenv("WATSON_MODEL_ID", "meta-llama/llama-3-3-70b-instruct"),
+        model_id=model_id,
         url=os.getenv("WATSON_ML_URL", "https://us-south.ml.cloud.ibm.com"),
         apikey=os.getenv("WATSON_API_KEY"),
         project_id=os.getenv("WATSON_PROJECT_ID"),
@@ -46,13 +54,40 @@ if MODEL_PROVIDER == "watsonx":
             "stop_sequences": ["Human:", "Observation"],
         },
     )
+elif MODEL_PROVIDER == "openrouter":
+    # OpenRouter Model Setup
+    # Supports various models through OpenRouter API
+    # Popular options: "openai/gpt-4", "anthropic/claude-3-opus", "meta-llama/llama-3-70b-instruct"
+    from langchain_openai import ChatOpenAI
+    
+    model_id = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet")
+    print(f"📡 Model Provider: OpenRouter")
+    print(f"🧠 Model ID: {model_id}")
+    
+    model = ChatOpenAI(
+        model=model_id,
+        openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+        openai_api_base=os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
+        temperature=float(os.getenv("OPENROUTER_TEMPERATURE", "0.7")),
+        max_tokens=int(os.getenv("OPENROUTER_MAX_TOKENS", "4096")),
+        model_kwargs={
+            "extra_headers": {
+                "HTTP-Referer": os.getenv("OPENROUTER_REFERER", "https://github.com/your-repo"),
+                "X-Title": os.getenv("OPENROUTER_APP_NAME", "Incident Response Agent"),
+            }
+        }
+    )
 else:
     # Anthropic Claude Model Setup (default)
     # Options: "anthropic:claude-haiku-4-5-20251001" (fast + cheap)
     #          "anthropic:claude-sonnet-4-5-20250929" (smarter)
-    model = init_chat_model(
-        os.getenv("ANTHROPIC_MODEL", "anthropic:claude-haiku-4-5-20251001")
-    )
+    model_id = os.getenv("ANTHROPIC_MODEL", "anthropic:claude-haiku-4-5-20251001")
+    print(f"📡 Model Provider: Anthropic Claude")
+    print(f"🧠 Model ID: {model_id}")
+    
+    model = init_chat_model(model_id)
+
+print(f"{'='*70}\n")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -72,7 +107,7 @@ SKILLS_DIR = str(Path(__file__).parent / "skills")
 WORKSPACE = str(Path(__file__).parent / "workspace")
 os.makedirs(WORKSPACE, exist_ok=True)
 
-backend = lambda runtime: FilesystemBackend(root_dir=WORKSPACE)
+backend = lambda runtime: FilesystemBackend(root_dir=WORKSPACE, virtual_mode=True)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -88,13 +123,9 @@ async def get_mcp_tools():
     
     # Skip MCP setup if URL is not configured
     if not MCP_SERVER_URL:
-        print("\n⚠️  MCP_SERVER_URL not configured. Skipping MCP tools...")
         return mcp_tools
     
-    print("\n🔌 Connecting to MCP Server...")
-    print(f"   Name: {MCP_SERVER_NAME}")
-    print(f"   URL: {MCP_SERVER_URL}")
-    print(f"   Transport: {MCP_SERVER_TRANSPORT}")
+    print(f"\n🔌 Connecting to MCP: {MCP_SERVER_NAME}")
     
     try:
         # Create MCP client using langchain_mcp_adapters
@@ -110,7 +141,7 @@ async def get_mcp_tools():
         # Get tools from MCP server
         async_mcp_tools = await mcp_client.get_tools()
         
-        print(f"✅ Successfully loaded {len(async_mcp_tools)} MCP tools")
+        print(f"✅ Loaded {len(async_mcp_tools)} MCP tools")
         
         # Wrap async tools to make them sync-compatible for deepagents
         from langchain_core.tools import StructuredTool
@@ -120,17 +151,13 @@ async def get_mcp_tools():
         for async_tool in async_mcp_tools:
             tool_name = getattr(async_tool, 'name', 'unknown')
             tool_desc = getattr(async_tool, 'description', '')
-            print(f"   📦 {tool_name}: {tool_desc[:60]}...")
             
             # Create a sync wrapper for the async tool
             def make_sync_wrapper(atool):
                 async def async_wrapper(**kwargs):
                     """Async wrapper that calls the MCP tool."""
-                    print(f"\n🔌 Calling MCP Tool: {atool.name}")
-                    print(f"   Arguments: {kwargs}")
                     try:
                         result = await atool.ainvoke(kwargs)
-                        print(f"✅ MCP Tool {atool.name} completed successfully")
                         return result
                     except Exception as e:
                         error_msg = f"MCP tool error: {str(e)}"
@@ -172,8 +199,7 @@ async def get_mcp_tools():
             mcp_tools.append(wrapped_tool)
                 
     except Exception as e:
-        print(f"⚠️  Failed to connect to MCP server: {e}")
-        print(f"   Continuing without MCP tools...")
+        print(f"⚠️  MCP connection failed: {e}")
     
     return mcp_tools
 
@@ -190,6 +216,14 @@ checkpointer = MemorySaver()
 # Get MCP tools synchronously
 mcp_tools = asyncio.run(get_mcp_tools())
 
+print(f"📚 Loading skills from: {SKILLS_DIR}")
+# List available skills
+skill_folders = [d for d in Path(SKILLS_DIR).iterdir() if d.is_dir() and (d / "SKILL.md").exists()]
+print(f"✅ Found {len(skill_folders)} skill(s):")
+for skill_folder in skill_folders:
+    print(f"   • {skill_folder.name}")
+print()
+
 agent = create_deep_agent(
     model=model,
     backend=backend,
@@ -197,12 +231,13 @@ agent = create_deep_agent(
     tools=mcp_tools,              # Add MCP tools from configured server
     checkpointer=checkpointer,    # enables conversation memory
     system_prompt=(
-        "You are an incident response assistant with MCP tool integration. You help on-call engineers:\n"
-        "1. Parse error logs and diagnose production issues (log-parser skill)\n"
-        "2. Generate Slack incident posts and action checklists (incident-brief-summarizer skill)\n"
-        "3. Use additional debugging tools through MCP integration (optional)\n\n"
+        "You are an incident response assistant. You help on-call engineers:\n"
+        "IMPORTANT: You MUST use the available skills for every incident analysis:\n"
+        "- ALWAYS use log-parser skill to analyze error logs\n"
+        "- ALWAYS use incident-brief-summarizer skill to create incident reports\n"
+        "- Do NOT skip skills or provide direct responses without using them\n\n"
         "Your goal: Get the engineer from 'something broke' to 'here's what to do' in 90 seconds.\n"
-        "Always be concise, calm, and actionable — even at 3 AM."
+        "Always be concise, calm, and actionable"
     ),
 )
 
@@ -222,11 +257,6 @@ def ask(question: str, thread_id: str = "default"):
     # stream_mode="updates" prints each step as it happens
     for chunk in agent.stream(inputs, config=config, stream_mode="updates"):
         for node, updates in chunk.items():
-            # Print which node/skill is being executed
-            print(f"\n{'─'*60}")
-            print(f"🔧 EXECUTING NODE: {node}")
-            print(f"{'─'*60}")
-            
             if updates and "messages" in updates:
                 # Handle Overwrite object - get the actual messages
                 messages = updates["messages"]
@@ -264,26 +294,56 @@ def ask(question: str, thread_id: str = "default"):
 # 8. DEMO QUERIES  – shows skills and MCP tools in action
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Example incident scenario
-    sample_logs = """
-[2024-01-15 03:04:12] ERROR payment-service: NullPointerException at DiscountCalculator.java:47
-[2024-01-15 03:04:13] ERROR payment-service: Failed to process checkout request
-[2024-01-15 03:04:14] ERROR payment-service: NullPointerException at DiscountCalculator.java:47
-[2024-01-15 03:04:15] ERROR payment-service: Failed to process checkout request
-[2024-01-15 03:04:16] ERROR payment-service: NullPointerException at DiscountCalculator.java:47
-
-Deploy history:
-[2024-01-15 03:01:00] payment-service v2.5.0 deployed
-"""
-
-    # Query: Analyze logs and generate incident response
-    ask(
-        f"We have an incident! Here are the logs:\n\n{sample_logs}\n\n"
-        "Please analyze what broke and give me a Slack post + action checklist.",
-        thread_id="incident-response-session"
+    print(f"\n{'='*70}")
+    print(f"🚨 INCIDENT RESPONSE AGENT - INTERACTIVE MODE")
+    print(f"{'='*70}\n")
+    
+    # Get log file path from user
+    log_file_path = input("📁 Enter the path to the log file: ").strip()
+    
+    # Validate and read log file
+    try:
+        # Handle relative and absolute paths
+        if not os.path.isabs(log_file_path):
+            log_file_path = Path(__file__).parent / log_file_path
+        else:
+            log_file_path = Path(log_file_path)
+        
+        if not log_file_path.exists():
+            print(f"❌ Error: Log file not found at {log_file_path}")
+            exit(1)
+        
+        with open(log_file_path, 'r') as f:
+            log_content = f.read()
+        
+        print(f"✅ Successfully loaded log file: {log_file_path}")
+        print(f"📊 Log file size: {len(log_content)} characters\n")
+        
+    except Exception as e:
+        print(f"❌ Error reading log file: {e}")
+        exit(1)
+    
+    # Get user query
+    print("💬 Enter your query about the logs:")
+    print("   (e.g., 'What caused this error?', 'Analyze what broke and give me a Slack post + action checklist')")
+    user_query = input("Query: ").strip()
+    
+    if not user_query:
+        print("❌ Error: Query cannot be empty")
+        exit(1)
+    
+    # Combine log content with user query
+    combined_message = (
+        f"{user_query}\n\n"
+        f"Here are the logs from {log_file_path.name}:\n\n"
+        f"```\n{log_content}\n```"
     )
     
-    # Uncomment to test with your own logs:
-    # ask("Here are my error logs: [paste your logs here]")
+    # Send to agent
+    ask(combined_message, thread_id="incident-response-session")
+    
+    print(f"\n{'='*70}")
+    print(f"✅ ANALYSIS COMPLETE")
+    print(f"{'='*70}\n")
 
 # Made with Bob
